@@ -1,12 +1,13 @@
 #!/bin/bash
 
-projectid="jslibs"
+projectid="blis-jslibs"
 
 #Deploy JS libraries
-gsutil cp libs/*  gs://bigquery-jslibs/
+gsutil -m cp libs/*  gs://blis-bigquery-jslibs/
 
 #regions where to deploy. default_us is there to denote the default wich is US and not qualified
-regions=( eu us default_us )
+regions=( us default_us us-east4 )
+
 
 #create datsets if it does not exist Datasets in all regions
 ls sql | sort -z|while read libname; do
@@ -23,6 +24,8 @@ ls sql | sort -z|while read libname; do
       datasetname="${reg}_${libname}"
     fi
 
+    datasetname=$(echo "$datasetname" | sed -r 's/-/_/g')
+
     #create the dataset
     bq --project_id="$projectid" --location="$region" mk -d \
     --description "Dataset in ${region} for functions of library: ${libname}" \
@@ -30,14 +33,13 @@ ls sql | sort -z|while read libname; do
 
     #To add allAuthenticatedUsers to the dataset we grab the just created permission
     bq --project_id="$projectid" show --format=prettyjson \
-    jslibs:"$datasetname" > permissions.json
-  
+    "$projectid":"$datasetname" > permissions.json
+
     #add the permision to temp file
-    sed  '/"access": \[/a \ 
-    {"role": "READER","specialGroup": "allAuthenticatedUsers"},' permissions.json > updated_permission.json
+    sed  '/"access": \[/a {"role": "READER","specialGroup": "allAuthenticatedUsers"},' permissions.json > updated_permission.json
 
     #we update with the new permissions file
-    bq --project_id="$projectid" update --source updated_permission.json jslibs:"$datasetname"    
+    bq --project_id="$projectid" update --source updated_permission.json "$project":"$datasetname"
 
     #cleanup
     rm updated_permission.json
@@ -48,6 +50,8 @@ done
 
 #We go over all the SQLs and replace for example jslibs.s2. with jslibs.eu_s2.
 #BIT HACKY
+
+rm -f .cmds.tmp
 
 #Iterate over all SQLs and run them in BQ
 find "$(pwd)" -name "*.sql" | sort  -z |while read fname; do
@@ -66,17 +70,20 @@ find "$(pwd)" -name "*.sql" | sort  -z |while read fname; do
     else
       datasetname="${reg}_${libname}"
     fi
-    
-    #string to match
-    search="jslibs.${libname}.${function_name}"
-    replace="jslibs.${datasetname}.${function_name}"
 
-    echo "CREATING OR UPDATING ${replace}"
+    datasetname=$(echo "$datasetname" | sed -r 's/-/_/g')
 
-    sed "s/${search}/${replace}/g" $fname > tmp.file
-    bq  --project_id="$projectid" query --use_legacy_sql=false --flagfile=tmp.file
-    rm tmp.file
+    fn="blis-jslibs.${datasetname}.${function_name}"
+    tmpfile=".${fn}.sql.tmp"
+
+    echo "CREATING OR UPDATING ${fn}"
+
+    sed "s/[\`]*jslibs\.\([^.]*\)\.\([^(\`]*\)[\`]*/\`blis-jslibs.${datasetname}.\2\`/g" $fname > $tmpfile
+    sed -i "s/bigquery-jslibs/blis-bigquery-jslibs/g" $tmpfile
+
+    echo "bq --project_id=\"$projectid\" --location=\"$region\" query --use_legacy_sql=false --flagfile=$tmpfile && rm $tmpfile" >> .cmds.tmp
 
   done
 done
 
+cat .cmds.tmp | xargs -I{} -n 1 -P 10 /bin/bash -c "{}"
