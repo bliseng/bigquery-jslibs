@@ -4,7 +4,7 @@ CREATE OR REPLACE FUNCTION jslibs.h3.polyfillFromGeoJson(geojson STRING, resolut
  LANGUAGE js AS
 """
 
-  const featureGeometry = JSON.parse(geojson)
+  const featureGeometry = JSON.parse(geojson);
 
   if (!['Polygon', 'MultiPolygon'].includes(featureGeometry.type)) {
     throw new Error(`Unsupported geometry type ${featureGeometry.type}`);
